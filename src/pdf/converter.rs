@@ -2190,6 +2190,16 @@ fn encode_protocol(
                 (rgb.into_raw(), width, height)
             };
             let id = page_image_id(page_num);
+            // Without shared memory (e.g. over SSH) every byte crosses the
+            // link as base64, so direct transmissions go out compressed.
+            let direct = |data: Vec<u8>| {
+                (if is_rgba {
+                    super::kittyv2::Image::from_rgba_bytes(data, width, height, id)
+                } else {
+                    super::kittyv2::Image::from_rgb_bytes(data, width, height, id)
+                })
+                .zlib_compressed()
+            };
             let img = if kitty_shm_support {
                 let shm_name = next_shm_name(pid, page_num);
                 let shm_result = if is_rgba {
@@ -2203,17 +2213,11 @@ fn encode_protocol(
                         log::warn!(
                             "SHM transfer failed for page {page_num}, falling back to direct: {e:?}"
                         );
-                        if is_rgba {
-                            super::kittyv2::Image::from_rgba_bytes(data, width, height, id)
-                        } else {
-                            super::kittyv2::Image::from_rgb_bytes(data, width, height, id)
-                        }
+                        direct(data)
                     }
                 }
-            } else if is_rgba {
-                super::kittyv2::Image::from_rgba_bytes(data, width, height, id)
             } else {
-                super::kittyv2::Image::from_rgb_bytes(data, width, height, id)
+                direct(data)
             };
 
             Ok(ConvertedImage::Kitty {

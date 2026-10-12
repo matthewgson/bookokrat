@@ -4,11 +4,13 @@
 //! the Kitty graphics protocol.
 
 use std::borrow::Cow;
+use std::io::Write;
 use std::num::NonZeroU32;
 
+use flate2::write::ZlibEncoder;
 use image::DynamicImage;
 
-use super::kgfx::{Format, MemoryRegion, ShmLease};
+use super::kgfx::{Compression, Format, MemoryRegion, ShmLease};
 
 /// Image dimensions in pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,8 +31,10 @@ pub enum Transmission<'a> {
     Direct {
         /// Optional chunk size for splitting inline payloads.
         chunk_size: Option<usize>,
-        /// Raw pixel data (RGB).
+        /// Pixel data (RGB or RGBA), compressed as `compression` says.
         data: Cow<'a, [u8]>,
+        /// Compression applied to `data` (sent as the `o=` key).
+        compression: Compression,
     },
 }
 
@@ -64,6 +68,7 @@ impl Image<'_> {
             transmission: Transmission::Direct {
                 chunk_size: None,
                 data: Cow::Owned(data),
+                compression: Compression::None,
             },
         }
     }
@@ -77,6 +82,7 @@ impl Image<'_> {
             transmission: Transmission::Direct {
                 chunk_size: None,
                 data: Cow::Owned(data),
+                compression: Compression::None,
             },
         }
     }
@@ -90,8 +96,45 @@ impl Image<'_> {
             transmission: Transmission::Direct {
                 chunk_size: None,
                 data: Cow::Owned(data),
+                compression: Compression::None,
             },
         }
+    }
+
+    /// Zlib-compresses the pixels of a direct transmission (`o=z`).
+    ///
+    /// Direct transmission is the fallback when the terminal can't read our
+    /// shared memory, typically over SSH, and there every byte crosses the
+    /// network as base64: a raw RGB page is ~18 MB, the same page compressed
+    /// ~0.4-0.6 MB. Level 3 takes ~10-20 ms per page. Call it on the render
+    /// worker, not the UI thread.
+    ///
+    /// Not level 1: zlib-rs's fastest level writes fixed-Huffman blocks, and
+    /// Ghostty 1.3.1 crashes when an image sent that way is placed again with
+    /// `a=p` (reproduced 2026-10-12). Levels 2+ write dynamic blocks and are
+    /// also smaller, at about the same speed.
+    pub fn zlib_compressed(mut self) -> Self {
+        if let Transmission::Direct {
+            data, compression, ..
+        } = &mut self.transmission
+        {
+            if *compression == Compression::None {
+                let mut encoder = ZlibEncoder::new(
+                    Vec::with_capacity(data.len() / 8),
+                    flate2::Compression::new(3),
+                );
+                match encoder.write_all(data).and_then(|()| encoder.finish()) {
+                    Ok(compressed) => {
+                        *data = Cow::Owned(compressed);
+                        *compression = Compression::Zlib;
+                    }
+                    Err(e) => {
+                        log::warn!("zlib compression failed, sending image uncompressed: {e}")
+                    }
+                }
+            }
+        }
+        self
     }
 
     /// Create an image for shared memory transmission (`t=s`).

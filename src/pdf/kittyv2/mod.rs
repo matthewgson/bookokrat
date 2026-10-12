@@ -241,9 +241,12 @@ fn display_image(request: ImageRequest, stdout: &mut io::Stdout) -> io::Result<(
                         .ok_or_else(|| io::Error::other("missing SHM lease for queued image"))?;
                     lease.handoff_to_tracker(request.page as i64, &mut tracker().lock().unwrap());
                 }
-                Transmission::Direct { data, .. } => {
+                Transmission::Direct {
+                    data, compression, ..
+                } => {
                     let mut cmd = DirectTransmit::new(dims.width, dims.height)
                         .format(format)
+                        .compression(*compression)
                         .image_id(image_id)
                         .placement_id(image_id)
                         .quiet(Quiet::ErrorsOnly)
