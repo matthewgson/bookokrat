@@ -1,5 +1,13 @@
 # Bookokrat
 
+> **Unofficial fork** of [bugzmanov/bookokrat](https://github.com/bugzmanov/bookokrat) with one fix
+> (modified 2026-10-12; AGPL-3.0, like upstream).
+>
+> **What it fixes:** when the terminal can't read bookokrat's shared memory, typically when reading over
+> SSH, every PDF page was sent as raw RGB: ~18 MB per page, about 2 s per page turn on a ~9 MB/s link.
+> This fork zlib-compresses those images (Kitty `o=z`) on the render worker. A page becomes ~0.4–0.8 MB,
+> and a remote page turn takes ~0.2–0.4 s. Local use (shared memory) is unchanged.
+
 Terminal EPUB/PDF/DJVU reader focused on speed, smooth navigation, and Vim-style workflows.
 
 https://github.com/user-attachments/assets/0ebe61c6-4629-4bde-8bd4-50feb9a424a3
